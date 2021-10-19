@@ -1,0 +1,22 @@
+from config_base import *
+
+# Configuration options
+#
+# This file overrides things set in config_base.py; put local modifications here so that on upgrades
+# you don't have to merge new changes added to the base config.  This file (when copied to
+# local_config.py) is ignored by git.
+
+# Example config override:
+#BACKWARDS_COMPAT_IDS = False
+
+# This one is pretty much always needed.  For a local DB you'll need at least the dbname; for a
+# remote DB you'll need more.  See psycopg documentation for details.
+pgsql_connect_opts = {
+    "dbname": "sessionfiles",
+}
+
+# Log level:
+#
+#import logging
+#log_level = logging.INFO
+

@@ -1,0 +1,260 @@
+openapi: 3.0.1
+info:
+  title: Session File Server
+  description: >
+    API documentation for the Session file server.  This is the API that
+    [Session](https://getsession.org) and related tools use to interface with encrypted, stored
+    files that are sent to and retrieved from the file server via onion requests.
+  contact:
+    name: The Oxen Project
+    email: team@oxen.io
+    url: https://getsession.org
+  license:
+    name: GPL v3.0
+    url: https://www.gnu.org/licenses/gpl-3.0.en.html
+  version: "3.0"
+externalDocs:
+  description: Find out more about the Oxen project
+  url: http://oxen.io
+paths:
+  /file:
+    post:
+      summary: "Uploads a file to the file server."
+      description: >
+        Uploads an opaque file (typically encrypted) to the file server.  This takes the file body
+        as binary.
+
+
+        This endpoint de-duplicates: that is, uploading an identical file body (which also implies
+        identical encryption) will *not* store the file a second time: instead it just updates the
+        file expiry.
+      requestBody:
+        description: The file content, in bytes.
+        required: true
+        content:
+          '*/*':
+            {}
+      responses:
+        200:
+          description: File successfully stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: >
+                      Random string id of the file on the server to be used in the `/file/ID`
+                      endpoint for retrieval.  Will contain only path-safe characters from
+                      `[a-zA-Z0-9_-]`.
+                      
+
+                      Currently this identifier is a 44 character value (264 bits, in base64
+                      encoding, chosen to be the smallest padding-free base64 encodable size >= 256
+                      bits), but that may change in future versions and should not be relied upon.
+        413:
+          description: >
+            Invalid upload size.  Returns for an invalid size (i.e. greater than the current limit
+            of 6MB; *note: 6MB != 6MiB*).
+          content: {}
+
+
+  /file/{fileId}:
+    get:
+      summary: Retrieve a stored file.
+      description: >
+        Retrieves a file stored on the file server.  The file is returned as binary.
+      parameters:
+        - name: fileId
+          in: path
+          description: "The file ID of the uploaded file."
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: File successfully retrieved.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        404:
+          description: The file was not found or has expired.
+          content: {}
+
+  /file/{fileId}/info:
+    get:
+      summary: Retrieves metadata of a stored file.
+      description: >
+        Returns information about a file without actually returning the file content itself.
+      parameters:
+        - $ref: "#/file/~1file~1%7BfileId%7D/parameters/0"
+      responses:
+        200:
+          description: File metadata retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  size:
+                    type: integer
+                    format: int64
+                    description: Size of the file contents, in bytes.
+                  uploaded:
+                    type: number
+                    format: double
+                    description: The unix timestamp when the file was uploaded.
+                  expires:
+                    type: number
+                    format: double
+                    description: >
+                      The unix timestamp when the file is scheduled to be removed.
+        404:
+          description: The file was not found or has expired.
+          content: {}
+
+  /session_version:
+    get:
+      summary: Retrieves the latest Session release version.
+      deprecated: True
+      description: >
+        Returns the current version of session for one of the three platforms (desktop, ios, or
+        android); this is effectively proxying (and caching) the response from the github release
+        page.
+
+
+        Note that the value is cached and can be up to 30 minutes out of date normally, and up to 24
+        hours out of date if we cannot reach the Github API for some reason.
+      parameters:
+        - name: platform
+          in: query
+          required: true
+          description: The session platform to query.
+          schema:
+            type: string
+            format: int32
+            enum: ["desktop", "android", "ios"]
+      responses:
+        200:
+          description: Version retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_code: >
+                    The value 200.  Included for backwards compatibility, and may be removed
+                    someday.
+                  result:
+                    type: string
+                    description: The Session version.
+                  updated:
+                    type: number
+                    format: double
+                    description: >
+                      The unix timestamp when this version was retrieved from Github; this can be up
+                      to 24 hours ago in case of consistent fetch errors, though normally will be
+                      within the last 30 minutes.
+        404:
+          description: "No such platform: the `platform` value was invalid."
+          content: {}
+        502:
+          description: >
+            Bad gateway.  Returned if the current version could not be successfuly retrieved from
+            Github within the last 24 hours.
+          content: {}
+
+  /files:
+    post:
+      deprecated: true
+      summary: Uploads a file to the file server wastefully.
+      description: >
+        Uploads an opaque file (typically encrypted) to the file server.  This takes the file body
+        as a json parameter, encoded in base64.  It is mainly provided for backwards compatibility:
+        see the `/file` endpoint which uses 25% less data by avoiding an unnecessary extra layer of
+        base64 encoding.
+
+
+        This endpoint also always returns the file id as an integer in the range [0, 2^53], and does
+        not de-duplicate identical uploads.
+
+
+        This is deprecated and will be removed in the future once all known users have migrated to
+        the `/file` endpoint.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: byte
+                  description: The file content (typically encrypted), in base64 encoding.
+      responses:
+        200:
+          description: File successfully stored
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: integer
+                    format: int64
+                    description: >
+                      Random id of the file on the server to be used in the `/files/ID`
+                      endpoint for retrieval.  Will be a value between 1 and 2^53.
+
+
+                      This endpoint is deprecated for Session clients that would break with a
+                      non-integer identifier; the more efficient and robust `/file` endpoint should
+                      be used instead.
+
+        413:
+          description: >
+            Invalid upload size.  Returns for an invalid size (i.e. greater than the current limit
+            of 6MB).  Note that the size here refers to the size in decoded bytes, not the size of
+            the base64 encoded value; in base64 encoded bytes the limit is 8MB.
+          content: {}
+
+        507:
+          description: >
+            Insufficient storage.  This is returned if the file server is unable to find a suitable
+            random id for the upload.
+          content: {}
+
+
+  /files/{fileId}:
+    get:
+      deprecated: true
+      summary: Retrieve a stored file wastefully.
+      description: >
+        Retrieves a file stored on the file server.  The file is returned wrapped in an unnecessary
+        layer of JSON and base64, for backwards compatibility.
+      parameters:
+        - $ref: "#/file/~1file~1%7BfileId%7D/parameters/0"
+      responses:
+        200:
+          description: File successfully retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_code:
+                    type: integer
+                    format: int32
+                    description: >
+                      The value 200.  Included for backwards compatibility.
+                  result:
+                    type: string
+                    format: byte
+                    description: The file content, encoded in base64.
+
+# vim:sw=2:et:tw=100
