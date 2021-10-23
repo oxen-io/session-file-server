@@ -33,7 +33,7 @@ if config.BACKWARDS_COMPAT_IDS:
 
 app = flask.Flask(__name__)
 
-psql_pool = ConnectionPool(min_size=2, max_size=32, **config.pgsql_connect_opts, autocommit=True)
+psql_pool = ConnectionPool(min_size=2, max_size=32, kwargs={**config.pgsql_connect_opts, "autocommit": True})
 
 coloredlogs.install(level=config.log_level, milliseconds=True, isatty=True)
 
