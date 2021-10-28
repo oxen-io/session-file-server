@@ -20,6 +20,7 @@ Debian/Ubuntu).
 - psycopg 3.x (*not* the older psycopg2 currently found in most linux distros)
 - psycopg_pool
 - requests
+- uwsgidecorators
 
 Additionally you need to build the Oxen Project's pyoxenmq and pylibonionreq.  This repository links
 to them as submodules; `make` will build them locally for simple setups (proper deb packaging of

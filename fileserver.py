@@ -15,6 +15,7 @@ from werkzeug.local import LocalProxy
 
 import config
 from timer import timer
+from postfork import postfork
 
 # error status codes:
 HTTP_ERROR_PAYLOAD_TOO_LARGE = 413
@@ -24,6 +25,7 @@ HTTP_BAD_GATEWAY = 502
 HTTP_BAD_REQUEST = 400
 HTTP_NOT_FOUND = 404
 
+coloredlogs.install(level=config.log_level, milliseconds=True, isatty=True)
 
 if config.BACKWARDS_COMPAT_IDS:
     assert all(x in (0, 1) for x in config.BACKWARDS_COMPAT_IDS_FIXED_BITS)
@@ -33,9 +35,12 @@ if config.BACKWARDS_COMPAT_IDS:
 
 app = flask.Flask(__name__)
 
-psql_pool = ConnectionPool(min_size=2, max_size=32, kwargs={**config.pgsql_connect_opts, "autocommit": True})
 
-coloredlogs.install(level=config.log_level, milliseconds=True, isatty=True)
+@postfork
+def pg_connect():
+    global psql_pool
+    psql_pool = ConnectionPool(min_size=2, max_size=32, kwargs={**config.pgsql_connect_opts, "autocommit": True})
+    psql_pool.wait()
 
 
 def get_psql_conn():
@@ -58,9 +63,9 @@ psql = LocalProxy(get_psql_conn)
 
 @timer(15)
 def periodic(signum):
-    with app.app_context(), psql, psql.cursor() as cur:
+    with app.app_context(), psql.cursor() as cur:
+        logging.info("Cleaning up expired files")
         cur.execute("DELETE FROM files WHERE expiry <= NOW()")
-        psql.commit()
 
         # NB: we do this infrequently (once every 30 minutes, per project) because Github rate
         # limits if you make more than 60 requests in an hour.
