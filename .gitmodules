@@ -1,0 +1,3 @@
+[submodule "libonionrequests"]
+	path = libonionrequests
+	url = https://github.com/majestrate/libonionrequests.git

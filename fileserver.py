@@ -2,6 +2,8 @@
 
 import flask
 from flask import request, g
+
+from datetime import datetime
 import base64
 import coloredlogs
 from hashlib import blake2b
@@ -12,10 +14,15 @@ from psycopg_pool import ConnectionPool
 import requests
 import secrets
 from werkzeug.local import LocalProxy
+import io
+import os
+import nacl.public
+import pyonionreq.junk
 
 import config
 from timer import timer
 from postfork import postfork
+from stats import log_stats
 
 # error status codes:
 HTTP_ERROR_PAYLOAD_TOO_LARGE = 413
@@ -32,6 +39,22 @@ if config.BACKWARDS_COMPAT_IDS:
     BACKWARDS_COMPAT_MSB = sum(
             y << x for x, y in enumerate(reversed(config.BACKWARDS_COMPAT_IDS_FIXED_BITS)))
     BACKWARDS_COMPAT_RANDOM_BITS = 53 - len(config.BACKWARDS_COMPAT_IDS_FIXED_BITS)
+
+if os.path.exists('key_x25519'):
+    with open('key_x25519', 'rb') as f:
+        key = f.read()
+        if len(key) != 32:
+            raise RuntimeError("Invalid key_x25519: expected 32 bytes, not {} bytes".format(len(key)))
+    privkey = nacl.public.PrivateKey(key)
+else:
+    privkey = nacl.public.PrivateKey.generate()
+    with open('key_x25519', 'wb') as f:
+        f.write(privkey.encode())
+
+logging.info("File server pubkey: {}".format(
+    privkey.public_key.encode(encoder=nacl.encoding.HexEncoder).decode()))
+
+onionparser = pyonionreq.junk.Parser(pubkey=privkey.public_key.encode(), privkey=privkey.encode())
 
 app = flask.Flask(__name__)
 
@@ -61,10 +84,13 @@ def release_psql_conn(exception):
 psql = LocalProxy(get_psql_conn)
 
 
+last_stats_printed = None
+
+
 @timer(15)
 def periodic(signum):
     with app.app_context(), psql.cursor() as cur:
-        logging.info("Cleaning up expired files")
+        logging.debug("Cleaning up expired files")
         cur.execute("DELETE FROM files WHERE expiry <= NOW()")
 
         # NB: we do this infrequently (once every 30 minutes, per project) because Github rate
@@ -88,16 +114,28 @@ def periodic(signum):
                 UPDATE release_versions SET updated = NOW(), version = %s
                 WHERE project = %s""", (v, project))
 
+        now = datetime.now()
+        global last_stats_printed
+        if last_stats_printed is None or (now - last_stats_printed).total_seconds() >= 3600:
+            print("wtf now={}, lsp={}".format(now, last_stats_printed))
+            log_stats(cur)
+            last_stats_printed = now
+
+
+def json_resp(data, status=200):
+    """Takes data and optionally an HTTP status, returns it as a json response."""
+    return flask.Response(
+            json.dumps(data),
+            status=code,
+            mimetype='application/json')
+
 
 def error_resp(code):
     """
     Simple JSON error response to send back, embedded as `status_code` and also as the HTTP response
     code.
     """
-    return flask.Response(
-            json.dumps({'status_code': code}),
-            status=code,
-            mimetype='application/json')
+    return json_resp({'status_code': code}, code)
 
 
 def generate_file_id(data):
@@ -110,7 +148,7 @@ def generate_file_id(data):
             blake2b(data, digest_size=33, salt=b'SessionFileSvr\0\0').digest()).decode()
 
 
-@app.route('/file', methods=['POST'])
+@app.post('/file')
 def submit_file(*, body=None, deprecated=False):
     if body is None:
         body = request.data
@@ -169,10 +207,10 @@ def submit_file(*, body=None, deprecated=False):
     response = {"id": id}
     if deprecated:
         response['status_code'] = 200
-    return flask.jsonify(response)
+    return json_resp(response)
 
 
-@app.route('/files', methods=['POST'])
+@app.post('/files')
 def submit_file_old():
     input = request.json()
     if input is None or 'file' not in input:
@@ -214,7 +252,7 @@ def get_file_old(id):
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
         if row:
-            return flask.jsonify({
+            return json_resp({
                 "status_code": 200,
                 "result": base64.b64encode(row[0])
                 })
@@ -229,7 +267,7 @@ def get_file_info(id):
         cur.execute("SELECT length(data), uploaded, expiry FROM files WHERE id = %s", (id,))
         row = cur.fetchone()
         if row:
-            return flask.jsonify({
+            return json_resp({
                 "size": row[0],
                 "uploaded": row[1].timestamp(),
                 "expires": row[2].timestamp()
@@ -257,8 +295,74 @@ def get_session_version():
         if row is None:
             logging.warn("{} version is more than 24 hours stale!".format(project))
             return error_resp(HTTP_BAD_GATEWAY)
-        return flask.jsonify({
+        return json_resp({
             "status_code": 200,
             "updated": row[1].timestamp(),
             "result": row[0]
             })
+
+
+# FIXME TODO: this has some other allowed aliases, I think, /oxen and... dunno?  Check SS.
+@app.post('/loki/v3/lsrpc')
+def onion_request():
+    body = request.data
+
+    logging.warn("onion request received: {}".format(body))
+
+    try:
+        junk = onionparser.parse_junk(body)
+    except RuntimeError as e:
+        logging.warn("Failed to decrypt onion request: {}".format(e))
+        return flask.Response(status=HTTP_ERROR_INTERNAL_SERVER_ERROR)
+
+    body = junk.payload
+    logging.warn("onion request decrypted to: {}".format(body))
+    try:
+        if body.startswith(b'{'):
+            # JSON input
+            req = json.loads(body)
+            meth, target = req['method'], req['endpoint']
+            if '?' in target:
+                target, query_string = target.split('?', 1)
+            else:
+                query_string = ''
+
+            subreq_body = body.get('body', '').encode()
+            if meth in ('POST', 'PUT'):
+                ct = body.get('contentType', 'application/json')
+                cl = len(subreq_body)
+            else:
+                if 'body' in req and len(req['body']):
+                    raise RuntimeError("Invalid {} {} request: request must not contain a body", meth, target)
+                ct, cl = '', ''
+        elif body.startswith(b'd'):
+            # bt-encoded input
+            raise RuntimeError("Not implemented yet")
+
+        else:
+            raise RuntimeError("Invalid onion request body: expected JSON object or a bt-encoded dict")
+
+        # Set up the wsgi environ variables for the subrequest (see PEP 0333)
+        subreq_env = {
+                **request.environ,
+                "REQUEST_METHOD": method,
+                "PATH_INFO": target,
+                "QUERY_STRING": query_string,
+                "CONTENT_TYPE": ct,
+                "CONTENT_LENGTH": cl,
+                **{'HTTP_{}'.format(h.upper().replace('-', '_')): v for h, v in req.get('headers', {}).items()},
+                'wsgi.input': input
+                }
+
+        try:
+            with app.request_context(subreq_env) as subreq_ctx:
+                response = app.full_dispatch_request()
+            return junk.transformReply(response.get_data())
+
+        except Exception as e:
+            logging.warn("Onion sub-request failed: {}".format(e))
+            return flask.Response(status=HTTP_BAD_GATEWAY)
+
+    except Exception as e:
+        logging.warn("Invalid onion request: {}".format(e))
+        return error_resp(HTTP_ERROR_INTERNAL_SERVER_ERROR)

@@ -38,5 +38,5 @@ pgsql_connect_opts = {
     "dbname": "sessionfiles",
 }
 
-# The log level
-log_level = logging.WARN
+# The default log level
+log_level = logging.INFO
