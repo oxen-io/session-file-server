@@ -31,9 +31,12 @@ window = [(0, started)]
 total_files = sum(1 for _ in os.scandir(filesdir))
 for dentry in os.scandir(filesdir):
     if not dentry.name.isdigit() or not dentry.is_file():
-        print("\nWARNING: {} doesn't look like an old file server upload, skipping.".format(
-            dentry.name),
-            file=sys.stderr)
+        print(
+            "\nWARNING: {} doesn't look like an old file server upload, skipping.".format(
+                dentry.name
+            ),
+            file=sys.stderr,
+        )
         continue
 
     stat = dentry.stat()
@@ -41,8 +44,12 @@ for dentry in os.scandir(filesdir):
     row = cur.execute("SELECT length(data) FROM files WHERE id = %s", (dentry.name,)).fetchone()
     if row:
         if size != row[0]:
-            print(("\nWARNING: Skipping duplicate id {} with mismatched size "
-                   "(expected {} ≠ actual {})").format(dentry.name, size, row[0]))
+            print(
+                (
+                    "\nWARNING: Skipping duplicate id {} with mismatched size "
+                    "(expected {} ≠ actual {})"
+                ).format(dentry.name, size, row[0])
+            )
         skipped += 1
         skipped_size += size
 
@@ -57,7 +64,8 @@ for dentry in os.scandir(filesdir):
             INSERT INTO files (id, data, uploaded, expiry)
             VALUES (%s, %b, %s, %s + %s)
             """,
-            (dentry.name, data, uploaded, uploaded, config.FILE_EXPIRY))
+            (dentry.name, data, uploaded, uploaded, config.FILE_EXPIRY),
+        )
         count += 1
         committed_size += size
 
@@ -67,22 +75,37 @@ for dentry in os.scandir(filesdir):
             window.pop(0)
         mb = committed_size / 1_000_000
         window.append((mb, now))
-        speed = ((window[-1][0] - window[0][0]) / (window[-1][1] - window[0][1]).total_seconds()
-                 if len(window) > 1 else 0)
-        print(("\rImported {:,} (new: {:,}, skipped: {:,}) / {:,} files containing "
-               "{:,.1f}MB new ({:,.2f}MB/s), {:,.1f}MB skipped data").format(
-            count + skipped, count, skipped, total_files,
-            mb, speed, skipped_size / 1_000_000
-            ), end='', flush=True)
+        speed = (
+            (window[-1][0] - window[0][0]) / (window[-1][1] - window[0][1]).total_seconds()
+            if len(window) > 1
+            else 0
+        )
+        print(
+            (
+                "\rImported {:,} (new: {:,}, skipped: {:,}) / {:,} files containing "
+                "{:,.1f}MB new ({:,.2f}MB/s), {:,.1f}MB skipped data"
+            ).format(
+                count + skipped, count, skipped, total_files, mb, speed, skipped_size / 1_000_000
+            ),
+            end='',
+            flush=True,
+        )
 
 
 duration = (datetime.now() - started).total_seconds()
-print("""
+print(
+    """
 
 Import finished: imported {:,} files containing {:,d} bytes of data in {:,.2f} seconds ({:,.2f}MB/s)
 
 Skipped {:,} already-existing files containing {:,} bytes
 
 """.format(
-    count, committed_size, duration, committed_size / 1_000_000 / duration,
-    skipped, skipped_size))
+        count,
+        committed_size,
+        duration,
+        committed_size / 1_000_000 / duration,
+        skipped,
+        skipped_size,
+    )
+)

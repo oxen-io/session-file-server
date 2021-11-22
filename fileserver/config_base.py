@@ -34,9 +34,7 @@ FILE_EXPIRY = '3 weeks'
 
 
 # postgresql connect options
-pgsql_connect_opts = {
-    "dbname": "sessionfiles",
-}
+pgsql_connect_opts = {"dbname": "sessionfiles"}
 
 # The default log level
 log_level = logging.INFO

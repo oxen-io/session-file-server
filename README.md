@@ -47,6 +47,9 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
        pip3 install psycopg psycopg_pool  # Or as above, once these enter Debian/Ubuntu
     ```
 
+    You may optionally also install `psycopg_c` for some performance improvements; this likely
+    requires first installing libpq-dev for postgresql headers.
+
 2. Build the required oxen Python modules:
 
        make
@@ -74,8 +77,8 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
    # The 'sessionfiles' database is now ready to go.
    ```
 
-4. Copy `config.py.sample` to `config.py` and edit as needed.  In particular you'll need to edit the
-   `pgsql_connect_opts` variable to specify database connection parameters.
+4. Copy `fileserver/config.py.sample` to `fileserver/config.py` and edit as needed.  In particular
+   you'll need to edit the `pgsql_connect_opts` variable to specify database connection parameters.
 
 5. Set up the application to run via wsgi.  The setup I use is:
 
@@ -94,7 +97,7 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
       plugins = python3,logfile
       processes = 4
       manage-script-name = true
-      mount = /=fileserver:app
+      mount = /=fileserver.web:app
 
       logger = file:logfile=/home/YOURUSER/session-file-server/sfs.log
       ```
@@ -107,6 +110,8 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
    ```bash
    sudo chown YOURUSER:www-data /etc/uwsgi-emperor/vassals/sfs.ini
    ```
+
+   (For nginx, you may need to change `www-data` to `nginx` in the above command).
 
    Because of the configuration you added in step 5, the ownership of the `sfs.ini` determines the
    user and group the program runs as.  Also note that uwsgi sensibly refuses to run as root, but if
@@ -140,6 +145,6 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
 9. Restart the web server and UWSGI emperor: `systemctl restart nginx uwsgi-emperor`
 
 10. In the future, if you update the file server code and want to restart it, you can just `touch
-    /etc/uwsgi-emperor/vassals/` — uwsgi-emperor watches the files for modifications and restarts
-    gracefully upon modifications (or in this case simply touching, which updates the file's
-    modification time without changing its content).
+    /etc/uwsgi-emperor/vassals/sfs.ini` — uwsgi-emperor watches the files for modifications and
+    restarts gracefully upon modifications (or in this case simply touching, which updates the
+    file's modification time without changing its content).

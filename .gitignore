@@ -1,1 +1,3 @@
-/config.py
+/fileserver/config.py
+__pycache__
+/key_x25519
