@@ -45,6 +45,5 @@ def periodic(signum):
         now = datetime.now()
         global last_stats_printed
         if last_stats_printed is None or (now - last_stats_printed).total_seconds() >= 3600:
-            print("wtf now={}, lsp={}".format(now, last_stats_printed))
             log_stats(cur)
             last_stats_printed = now

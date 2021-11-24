@@ -105,15 +105,13 @@ def submit_file(*, body=None, deprecated=False):
         app.logger.error("Failed to insert file: {}".format(e))
         return error_resp(http.INTERNAL_SERVER_ERROR)
 
-    response = {"id": id}
-    if deprecated:
-        response["status_code"] = 200
+    response = {"result": id, "status_code": 200} if deprecated else {"id": id}
     return json_resp(response)
 
 
 @app.post("/files")
 def submit_file_old():
-    input = request.json()
+    input = request.json
     if input is None or "file" not in input:
         app.logger.warn("Invalid request: did not find json with a 'file' property")
         return error_resp(http.BAD_REQUEST)
@@ -133,7 +131,7 @@ def submit_file_old():
         body += "="
     body = base64.b64decode(body, validate=True)
 
-    return submit_file(body=body)
+    return submit_file(body=body, deprecated=True)
 
 
 @app.route("/file/<id>")
@@ -156,7 +154,7 @@ def get_file_old(id):
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
         if row:
-            return json_resp({"status_code": 200, "result": base64.b64encode(row[0])})
+            return json_resp({"status_code": 200, "result": base64.b64encode(row[0]).decode()})
         else:
             app.logger.warn("File '{}' does not exist".format(id))
             return error_resp(http.NOT_FOUND)
