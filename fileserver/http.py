@@ -1,3 +1,5 @@
+OK = 200
+
 # error status codes:
 BAD_REQUEST = 400
 NOT_FOUND = 404

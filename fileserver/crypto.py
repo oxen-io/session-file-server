@@ -1,5 +1,6 @@
 import nacl.public
 import os
+import pyonionreq.junk
 
 from .web import app
 
@@ -15,6 +16,9 @@ else:
     privkey = nacl.public.PrivateKey.generate()
     with open("key_x25519", "wb") as f:
         f.write(privkey.encode())
+
+_junk_parser = pyonionreq.junk.Parser(privkey=privkey.encode(), pubkey=privkey.public_key.encode())
+parse_junk = _junk_parser.parse_junk
 
 app.logger.info(
     "File server pubkey: {}".format(

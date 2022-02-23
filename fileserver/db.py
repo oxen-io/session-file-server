@@ -10,8 +10,14 @@ from werkzeug.local import LocalProxy
 @postfork
 def pg_connect():
     global psql_pool
+
+    # Test suite sets this to handle the connection itself:
+    if 'defer' in config.pgsql_connect_opts:
+        return
+
+    conninfo = config.pgsql_connect_opts.pop('conninfo', '')
     psql_pool = ConnectionPool(
-        min_size=2, max_size=32, kwargs={**config.pgsql_connect_opts, "autocommit": True}
+        conninfo, min_size=2, max_size=32, kwargs={**config.pgsql_connect_opts, "autocommit": True}
     )
     psql_pool.wait()
 
