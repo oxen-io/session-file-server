@@ -1,3 +1,4 @@
 [flake8]
 max-line-length = 100
 exclude=libonionrequests,fileserver/config.py
+extend-ignore = E203  # See https://github.com/psf/black/issues/315

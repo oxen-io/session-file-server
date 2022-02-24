@@ -21,10 +21,11 @@ Debian/Ubuntu).
 - psycopg_pool
 - requests
 - uwsgidecorators
+- oxenmq
+- pyonionreq
 
-Additionally you need to build the Oxen Project's pyoxenmq and pylibonionreq.  This repository links
-to them as submodules; `make` will build them locally for simple setups (proper deb packaging of
-those libs is still a TODO).
+(The last two are Oxen projects that either need to be installed manually, or via the Oxen deb
+repository).
 
 ### WSGI request handler
 

@@ -1,12 +1,12 @@
 from . import config
 from .web import app
-from .db import psql
-from . import http
+from . import db
+from . import http, utils
 
 import flask
 from flask import request
 import secrets
-import base64
+from base64 import urlsafe_b64encode
 from hashlib import blake2b
 import json
 import psycopg
@@ -38,7 +38,7 @@ def generate_file_id(data):
     base64 chars.  (Ideally would be 32, but that would result in base64 padding, so increased to 33
     to fit perfectly).
     """
-    return base64.urlsafe_b64encode(
+    return urlsafe_b64encode(
         blake2b(data, digest_size=33, salt=b"SessionFileSvr\0\0").digest()
     ).decode()
 
@@ -66,7 +66,7 @@ def submit_file(*, body=None, deprecated=False):
                 if not deprecated:
                     id = str(id)  # New ids are always strings; legacy requests require an integer
                 try:
-                    with psql.cursor() as cur:
+                    with db.psql.cursor() as cur:
                         cur.execute(
                             "INSERT INTO files (id, data, expiry) VALUES (%s, %s, NOW() + %s)",
                             (id, body, config.FILE_EXPIRY),
@@ -83,11 +83,11 @@ def submit_file(*, body=None, deprecated=False):
                 return error_resp(http.INSUFFICIENT_STORAGE)
 
         else:
-            with psql.transaction(), psql.cursor() as cur:
+            with db.psql.transaction(), db.psql.cursor() as cur:
                 id = generate_file_id(body)
                 try:
                     # Don't pass the data yet because we might be de-duplicating
-                    with psql.transaction():
+                    with db.psql.transaction():
                         cur.execute(
                             "INSERT INTO files (id, data, expiry) VALUES (%s, '', NOW() + %s)",
                             (id, config.FILE_EXPIRY),
@@ -125,18 +125,14 @@ def submit_file_old():
         )
         return error_resp(http.PAYLOAD_TOO_LARGE)
 
-    # base64.b64decode is picky about padding (but not, by default, about random non-alphabet
-    # characters in the middle of the data, wtf!)
-    while len(body) % 4 != 0:
-        body += "="
-    body = base64.b64decode(body, validate=True)
+    body = utils.decode_base64(body)
 
     return submit_file(body=body, deprecated=True)
 
 
-@app.route("/file/<id>")
+@app.get("/file/<id>")
 def get_file(id):
-    with psql.cursor() as cur:
+    with db.psql.cursor() as cur:
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
         if row:
@@ -148,21 +144,21 @@ def get_file(id):
             return error_resp(http.NOT_FOUND)
 
 
-@app.route("/files/<id>")
+@app.get("/files/<id>")
 def get_file_old(id):
-    with psql.cursor() as cur:
+    with db.psql.cursor() as cur:
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
         if row:
-            return json_resp({"status_code": 200, "result": base64.b64encode(row[0]).decode()})
+            return json_resp({"status_code": 200, "result": utils.encode_base64(row[0])})
         else:
             app.logger.warn("File '{}' does not exist".format(id))
             return error_resp(http.NOT_FOUND)
 
 
-@app.route("/file/<id>/info")
+@app.get("/file/<id>/info")
 def get_file_info(id):
-    with psql.cursor() as cur:
+    with db.psql.cursor() as cur:
         cur.execute("SELECT length(data), uploaded, expiry FROM files WHERE id = %s", (id,))
         row = cur.fetchone()
         if row:
@@ -174,16 +170,16 @@ def get_file_info(id):
             return error_resp(http.NOT_FOUND)
 
 
-@app.route("/session_version")
+@app.get("/session_version")
 def get_session_version():
-    platform = request.args["platform"]
+    platform = request.args.get("platform")
 
     if platform not in ("desktop", "android", "ios"):
         app.logger.warn("Invalid session platform '{}'".format(platform))
         return error_resp(http.NOT_FOUND)
     project = "oxen-io/session-" + platform
 
-    with psql.cursor() as cur:
+    with db.psql.cursor() as cur:
         cur.execute(
             """
             SELECT version, updated FROM release_versions

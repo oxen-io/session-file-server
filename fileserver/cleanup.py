@@ -1,5 +1,5 @@
 from .web import app
-from .db import psql
+from . import db
 from .timer import timer
 from .stats import log_stats
 
@@ -9,9 +9,9 @@ import requests
 last_stats_printed = None
 
 
-@timer(15)
+@timer(15, target="worker1")
 def periodic(signum):
-    with app.app_context(), psql.cursor() as cur:
+    with app.app_context(), db.psql.cursor() as cur:
         app.logger.debug("Cleaning up expired files")
         cur.execute("DELETE FROM files WHERE expiry <= NOW()")
 

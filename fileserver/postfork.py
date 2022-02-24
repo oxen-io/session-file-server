@@ -6,10 +6,11 @@ except ModuleNotFoundError:
         """Simple non-uwsgi stub that just calls the postfork function"""
 
         def __init__(self, f):
-            f()
+            self.f = f
+            self.f()
 
-        def __call__(self, f):
-            pass
+        def __call__(self):
+            self.f()
 
 
 else:
