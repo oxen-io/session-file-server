@@ -6,7 +6,7 @@ import os
 import os.path
 from datetime import datetime
 
-import config
+from fileserver import config
 
 psql = psycopg.connect(**config.pgsql_connect_opts, autocommit=True)
 
