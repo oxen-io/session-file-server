@@ -136,7 +136,7 @@ def get_file(id):
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
         if row:
-            response = flask.make_response(row[0].tobytes())
+            response = flask.make_response(row[0])
             response.headers.set("Content-Type", "application/octet-stream")
             return response
         else:
