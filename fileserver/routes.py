@@ -73,6 +73,18 @@ def submit_file(*, body=None, deprecated=False):
                         )
                 except psycopg.errors.UniqueViolation:
                     continue
+
+                if db.slave:
+                    try:
+                        with db.slave.cursor() as cur:
+                            cur.execute(
+                                "INSERT INTO files (id, data, expiry) VALUES (%s, %s, NOW() + %s)",
+                                (id, body, config.FILE_EXPIRY),
+                            )
+                    except psycopg.errors.Error as e:
+                        app.logger.warning(f"Failed to store file on slave: {e}")
+                        pass
+
                 done = True
                 break
 
@@ -83,23 +95,27 @@ def submit_file(*, body=None, deprecated=False):
                 return error_resp(http.INSUFFICIENT_STORAGE)
 
         else:
-            with db.psql.transaction(), db.psql.cursor() as cur:
-                id = generate_file_id(body)
-                try:
-                    # Don't pass the data yet because we might be de-duplicating
-                    with db.psql.transaction():
+            id = generate_file_id(body)
+            for psql in (db.psql, db.slave):
+                if not psql:
+                    continue
+
+                with psql.transaction(), psql.cursor() as cur:
+                    try:
+                        # Don't pass the data yet because we might be de-duplicating
+                        with db.psql.transaction():
+                            cur.execute(
+                                "INSERT INTO files (id, data, expiry) VALUES (%s, '', NOW() + %s)",
+                                (id, config.FILE_EXPIRY),
+                            )
+                    except psycopg.errors.UniqueViolation:
+                        # Found a duplicate id, so de-duplicate by just refreshing the expiry
                         cur.execute(
-                            "INSERT INTO files (id, data, expiry) VALUES (%s, '', NOW() + %s)",
-                            (id, config.FILE_EXPIRY),
+                            "UPDATE files SET uploaded = NOW(), expiry = NOW() + %s WHERE id = %s",
+                            (config.FILE_EXPIRY, id),
                         )
-                except psycopg.errors.UniqueViolation:
-                    # Found a duplicate id, so de-duplicate by just refreshing the expiry
-                    cur.execute(
-                        "UPDATE files SET uploaded = NOW(), expiry = NOW() + %s WHERE id = %s",
-                        (config.FILE_EXPIRY, id),
-                    )
-                else:
-                    cur.execute("UPDATE files SET data = %s WHERE id = %s", (body, id))
+                    else:
+                        cur.execute("UPDATE files SET data = %s WHERE id = %s", (body, id))
 
     except Exception as e:
         app.logger.error("Failed to insert file: {}".format(e))
@@ -135,6 +151,9 @@ def get_file(id):
     with db.psql.cursor() as cur:
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
+        if not row and config.BACKUP_TABLE is not None:
+            cur.execute(f"SELECT data FROM {config.BACKUP_TABLE} WHERE id = %s", (id,), binary=True)
+            row = cur.fetchone()
         if row:
             response = flask.make_response(row[0])
             response.headers.set("Content-Type", "application/octet-stream")
@@ -149,6 +168,9 @@ def get_file_old(id):
     with db.psql.cursor() as cur:
         cur.execute("SELECT data FROM files WHERE id = %s", (id,), binary=True)
         row = cur.fetchone()
+        if not row and config.BACKUP_TABLE is not None:
+            cur.execute(f"SELECT data FROM {config.BACKUP_TABLE} WHERE id = %s", (id,), binary=True)
+            row = cur.fetchone()
         if row:
             return json_resp({"status_code": 200, "result": utils.encode_base64(row[0])})
         else:
@@ -161,6 +183,9 @@ def get_file_info(id):
     with db.psql.cursor() as cur:
         cur.execute("SELECT length(data), uploaded, expiry FROM files WHERE id = %s", (id,))
         row = cur.fetchone()
+        if not row and config.BACKUP_TABLE is not None:
+            cur.execute(f"SELECT length(data), uploaded, expiry FROM {config.BACKUP_TABLE} WHERE id = %s", (id,))
+            row = cur.fetchone()
         if row:
             return json_resp(
                 {"size": row[0], "uploaded": row[1].timestamp(), "expires": row[2].timestamp()}

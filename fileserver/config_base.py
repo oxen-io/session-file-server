@@ -36,5 +36,13 @@ FILE_EXPIRY = '3 weeks'
 # postgresql connect options
 pgsql_connect_opts = {"dbname": "sessionfiles"}
 
+
+BACKUP_TABLE = None
+
+# If not None then we replicate database changes into this database as well;
+# the value is as connection options dict, just like pgsql_connect_opts
+pgsql_slave = None
+
+
 # The default log level
 log_level = logging.INFO
