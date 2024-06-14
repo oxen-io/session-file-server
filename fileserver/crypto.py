@@ -1,6 +1,7 @@
 import nacl.public
 import os
-import pyonionreq.junk
+import pyonionreq
+from pyonionreq import junk
 
 from .web import app
 

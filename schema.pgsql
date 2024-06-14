@@ -16,14 +16,45 @@ CREATE INDEX files_expiry ON files(expiry);
 CREATE TABLE release_versions (
     project varchar(50) PRIMARY KEY,
     version varchar(25) NOT NULL,
+    prerelease BOOL NOT NULL,
+    name TEXT,
+    notes TEXT,
     updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Abritrary version values at the (approx) time this was written; this don't really matter as
 -- they'll get updated within a first few seconds of initial startup.
-INSERT INTO release_versions (project, version, updated) VALUES ('oxen-io/session-desktop', 'v1.7.3', '2021-10-14Z');
-INSERT INTO release_versions (project, version, updated) VALUES ('oxen-io/session-android', '1.11.11', '2021-10-14Z');
-INSERT INTO release_versions (project, version, updated) VALUES ('oxen-io/session-ios', '1.11.17', '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-desktop', 'v1.7.3', false, NULL, NULL, '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-android', '1.11.11', false, NULL, NULL, '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-ios', '1.11.17', false, NULL, NULL, '2021-10-14Z');
+
+CREATE TABLE release_assets (
+    project varchar(50) NOT NULL,
+    version varchar(25) NOT NULL,
+    name varchar(225) NOT NULL,
+    url varchar(225) NOT NULL
+);
+
+CREATE INDEX release_assets_project_version ON release_assets(project, version);
+
+CREATE TABLE account_version_checks (
+    blinded_id varchar(66) NOT NULL,
+    platform varchar(25) NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    CONSTRAINT unique_blinded_id_platform_timestamp UNIQUE (blinded_id, platform, timestamp)
+);
+
+CREATE INDEX account_version_checks_blinded_id ON account_version_checks(blinded_id);
+
+CREATE TABLE session_token_stats (
+    current_value NUMERIC(20, 6) NOT NULL,
+    total_nodes INT NOT NULL,
+    total_tokens_staked INT NOT NULL,
+    circulating_supply INT NOT NULL,
+    total_supply INT NOT NULL,
+    staking_reward_pool INT NOT NULL,
+    updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+);
 
 COMMIT;
 
