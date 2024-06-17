@@ -65,10 +65,6 @@ CREATE TABLE session_token_stats (
     updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
--- Abritrary values at the (approx) time this was written; this don't really matter as
--- they'll get updated within a first few seconds of initial startup.
-INSERT INTO session_token_stats (current_value, total_nodes, total_tokens_staked, circulating_supply, total_supply, staking_reward_pool, updated) VALUES (0.099002, 2194, 30400000, 68297852, 68297852, 40000000, '2024-06-14Z');
-
 COMMIT;
 
 -- vim:ft=sql
