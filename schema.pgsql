@@ -16,17 +16,24 @@ CREATE INDEX files_expiry ON files(expiry);
 CREATE TABLE release_versions (
     project varchar(50) PRIMARY KEY,
     version varchar(25) NOT NULL,
-    prerelease BOOL NOT NULL,
-    name TEXT,
-    notes TEXT,
+    prerelease_version varchar(25),
     updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
 -- Abritrary version values at the (approx) time this was written; this don't really matter as
 -- they'll get updated within a first few seconds of initial startup.
-INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-desktop', 'v1.7.3', false, NULL, NULL, '2021-10-14Z');
-INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-android', '1.11.11', false, NULL, NULL, '2021-10-14Z');
-INSERT INTO release_versions (project, version, prerelease, name, notes, updated) VALUES ('oxen-io/session-ios', '1.11.17', false, NULL, NULL, '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease_version, updated) VALUES ('oxen-io/session-desktop', 'v1.7.3', NULL, '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease_version, updated) VALUES ('oxen-io/session-android', '1.11.11', NULL, '2021-10-14Z');
+INSERT INTO release_versions (project, version, prerelease_version, updated) VALUES ('oxen-io/session-ios', '1.11.17', NULL, '2021-10-14Z');
+
+CREATE TABLE release_notes (
+    project varchar(50) NOT NULL,
+    version varchar(25) NOT NULL,
+    name TEXT,
+    notes TEXT
+);
+
+CREATE INDEX release_notes_project_version ON release_notes(project, version);
 
 CREATE TABLE release_assets (
     project varchar(50) NOT NULL,
@@ -36,6 +43,8 @@ CREATE TABLE release_assets (
 );
 
 CREATE INDEX release_assets_project_version ON release_assets(project, version);
+
+INSERT INTO release_assets (project, version, name, url) VALUES ('oxen-io/session-desktop', 'v1.7.3', 'Test name', 'github.com');
 
 CREATE TABLE account_version_checks (
     blinded_id varchar(66) NOT NULL,
@@ -55,6 +64,10 @@ CREATE TABLE session_token_stats (
     staking_reward_pool INT NOT NULL,
     updated TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
+
+-- Abritrary values at the (approx) time this was written; this don't really matter as
+-- they'll get updated within a first few seconds of initial startup.
+INSERT INTO session_token_stats (current_value, total_nodes, total_tokens_staked, circulating_supply, total_supply, staking_reward_pool, updated) VALUES (0.099002, 2194, 30400000, 68297852, 68297852, 40000000, '2024-06-14Z');
 
 COMMIT;
 

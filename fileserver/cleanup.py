@@ -10,15 +10,26 @@ import requests
 
 last_stats_printed = None
 
-def insert_new_assets(cur, project, version, assets):
-    if assets:
-        for asset in assets:
-            cur.execute(
-                """
-                INSERT INTO release_assets (project, version, name, url) VALUES (%s, %s, %s, %s)
-                """,
-                (project, version, asset['name'], asset['url']),
-            )
+def insert_release_notes_and_assets(cur, project, release):
+    if release:
+        version = release['tag_name']
+        assets = release.get('assets')
+
+        cur.execute(
+            """
+            INSERT INTO release_notes (project, version, name, notes) VALUES (%s, %s, %s, %s)
+            """,
+            (project, version, release.get('name'), release.get('body')),
+        )
+
+        if assets:
+            for asset in assets:
+                cur.execute(
+                    """
+                    INSERT INTO release_assets (project, version, name, url) VALUES (%s, %s, %s, %s)
+                    """,
+                    (project, version, asset['name'], asset['url']),
+                )
 
 @timer(15, target="worker1")
 def periodic(signum):
@@ -38,13 +49,13 @@ def periodic(signum):
                 # the next one by 30 seconds (and avoids triggering github rate limiting).
                 cur.execute(
                     """
-                    SELECT project, version FROM release_versions
-                    WHERE updated < NOW() + '30 minutes ago' AND prerelease = False LIMIT 1
+                    SELECT project, version, prerelease_version FROM release_versions
+                    WHERE updated < NOW() + '30 minutes ago' LIMIT 1
                     """
                 )
                 row = cur.fetchone()
                 if row:
-                    project, old_v = row
+                    project, old_v, old_prerelease_v = row
                     latest = requests.get(
                         "https://api.github.com/repos/{}/releases/latest".format(project), timeout=5
                     ).json()
@@ -58,61 +69,41 @@ def periodic(signum):
                     recent = requests.get(
                         "https://api.github.com/repos/{}/releases?per_page=3".format(project), timeout=5
                     ).json()
-
                     v = latest["tag_name"]
                     if v != old_v:
                         app.logger.info(
                             "{} latest release version changed from {} to {}".format(project, old_v, v)
                         )
+
+                    prerelease = next((r for r in recent if r.get('prerelease')), False)
+                    prerelease_v = None
+
+                    if prerelease:
+                        prerelease_v = prerelease["tag_name"]
+
                     cur.execute(
                         """
-                        UPDATE release_versions SET updated = NOW(), version = %s, name = %s, notes = %s
+                        UPDATE release_versions SET updated = NOW(), version = %s, prerelease_version = %s
                         WHERE project = %s""",
-                        (v, project, latest['name'], latest['body']),
+                        (v, prerelease_v, project),
                     )
 
-                    # Remove any old assets and prereleases
-                    prerelease = next((r for r in recent if r['prerelease']), None)
-                    old_prerelease_v = None
+                    # Update release notes and assets
+                    cur.execute(
+                        """
+                        DELETE FROM release_notes
+                        WHERE project = %s""",
+                        (project,),
+                    )
+                    cur.execute(
+                        """
+                        DELETE FROM release_assets
+                        WHERE project = %s""",
+                        (project,),
+                    )
 
-                    if prerelease is not None:
-                        cur.execute(
-                            """
-                            SELECT version FROM release_versions
-                            WHERE project = %s AND prerelease = True LIMIT 1""",
-                            (project),
-                        )
-
-                        prerow = cur.fetchone()
-                        if prerow:
-                            old_prerelease_v = prerow
-
-                    if v != old_v or (prerelease and prerelease['tag_name'] != old_prerelease_v):
-                        cur.execute(
-                            """
-                            DELETE FROM release_assets
-                            WHERE project = %s""",
-                            (project,),
-                        )
-                        cur.execute(
-                            """
-                            DELETE FROM release_versions
-                            WHERE project = %s AND prerelease = True""",
-                            (project,),
-                        )
-
-                        # Insert new assets
-                        insert_new_assets(cur, project, v, latest['assets'])
-
-                        # Add new prereleases
-                        if prerelease:
-                            cur.execute(
-                                """
-                                INSERT INTO release_versions (project, version, prerelease, name, nodes, updated) VALUES (%s, %s, True, %s, %s, NOW())
-                                """,
-                                (project, prerelease['tag_name'], asset['name'], asset['url']),
-                            )
-                            insert_new_assets(cur, project, prerelease['tag_name'], prerelease['assets'])
+                    insert_release_notes_and_assets(cur, project, latest)
+                    insert_release_notes_and_assets(cur, project, prerelease)
 
                 now = datetime.now()
                 global last_stats_printed

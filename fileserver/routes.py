@@ -72,7 +72,6 @@ def valid_blinded_version_id_for_auth(request, required):
         request.headers.get(f"X-FS-{h}") for h in ('Pubkey', 'Timestamp', 'Signature')
     )
     missing = sum(x is None or x == '' for x in (pk, ts_str, sig_in))
-    app.logger.info("Request Headers: %s", request.headers)
 
     # If we were missing one of the auth headers and don't require auth then just return a 'None'
     if missing > 0 and not required:
@@ -141,7 +140,7 @@ def valid_blinded_version_id_for_auth(request, required):
 
     if len(request.data):
         to_verify = to_verify + blake2b(request.data, digest_size=64)
-    app.logger.warn("Attepting to verify '{}'".format(to_verify))
+
     try:
         pk = VerifyKey(pk)
         pk.verify(to_verify, sig_in)
@@ -331,101 +330,104 @@ def get_session_version():
                     """,
                     (blinded_id, platform),
                 )
-                cur.execute(
-                    """
-                    SELECT blinded_id, platform, timestamp FROM account_version_checks
-                    WHERE blinded_id = %s
-                    """,
-                    (blinded_id,),
-                )
-                records = cur.fetchall()
-                if records is not None:
-                    for record in records:
-                        app.logger.info("Record: '{}'".format(record))
 
     with db.psql.cursor() as cur:
         cur.execute(
             """
-            SELECT version, updated, prerelease, name, notes FROM release_versions
+            SELECT version, prerelease_version, updated FROM release_versions
             WHERE project = %s AND updated >= NOW() + '24 hours ago'
         """,
             (project,),
         )
 
-        rows = cur.fetchall()
-        latest_release_info = None
-        prerelease_info = None
-
-        # Iterate through the rows
-        for row in rows:
-            version, updated, prerelease, name, notes = row
-
-            # Check if the row is a prerelease
-            if prerelease:
-                if prerelease_info is None:
-                    prerelease_info = row
-            else:
-                if latest_release_info is None:
-                    latest_release_info = row
-
-            # If both values are found, we can stop the loop
-            if latest_release_info and prerelease_info:
-                break
-
-        if latest_release_info is None:
+        row = cur.fetchone()
+        if row is None:
             app.logger.warn("{} version is more than 24 hours stale!".format(project))
             return error_resp(http.BAD_GATEWAY)
 
-        cur.execute(
-            """
-            SELECT version, name, url FROM release_assets
-            WHERE project = %s""",
-            (project,),
-        )
-        assets = cur.fetchall()
-        assets_by_version = {}
-
-        # Iterate through the rows and organize them by version
-        for asset in assets:
-            version, name, url = asset
-            
-            if version not in assets_by_version:
-                assets_by_version[version] = []
-            
-            assets_by_version[version].append({
-                "name": name,
-                "url": url
-            })
-
+        version = row[0]
+        prerelease_version = row[1]
         response = {
             "status_code": 200,
-            "updated": latest_release_info[1].timestamp(),
-            "result": latest_release_info[0]
+            "updated": row[2].timestamp(),
+            "result": version
         }
 
-        if latest_release_info[3] is not None:
-            response["name"] = latest_release_info[3]
+        # Add release notes and assets
+        cur.execute(
+            """
+            SELECT name, notes FROM release_notes
+            WHERE project = %s AND version = %s""",
+            (project,version,),
+        )
 
-        if latest_release_info[4] is not None:
-            response["notes"] = latest_release_info[4]
+        release_notes = cur.fetchone()
+        if release_notes:
+            if release_notes[0]:
+                response["name"] = release_notes[0]
 
-        if assets_by_version[latest_release_info[0]] is not None:
-            response["assets"] = assets_by_version[latest_release_info[0]]
+            if release_notes[1]:
+                response["notes"] = release_notes[1]
 
-        if prerelease_info is not None:
+        cur.execute(
+            """
+            SELECT name, url FROM release_assets
+            WHERE project = %s AND version = %s""",
+            (project,version,),
+        )
+        assets = cur.fetchall()
+
+        if assets:
+            asset_info = []
+
+            for asset in assets:
+                asset_info.append({
+                    "name": asset[0],
+                    "url": asset[1]
+                })
+                
+            response["assets"] = asset_info
+
+        # Add prerelease info if present
+        if prerelease_version:
             response["prerelease"] = {
-                "updated": prerelease_info[1].timestamp(),
-                "result": prerelease_info[0],
+                "result": prerelease_version,
+                "updated": row[2].timestamp(),
             }
 
-            if prerelease_info[3] is not None:
-                response["prerelease"]["name"] = prerelease_info[3]
+            cur.execute(
+                """
+                SELECT name, notes FROM release_notes
+                WHERE project = %s AND version = %s""",
+                (project,prerelease_version,),
+            )
 
-            if prerelease_info[4] is not None:
-                response["prerelease"]["notes"] = prerelease_info[4]
+            prerelease_notes = cur.fetchone()
+            if prerelease_notes:
+                if prerelease_notes[0]:
+                    response["prerelease"]["name"] = prerelease_notes[0]
 
-            if assets_by_version[prerelease_info[0]] is not None:
-                response["prerelease"]["assets"] = assets_by_version[prerelease_info[0]]
+                if prerelease_notes[1]:
+                    response["prerelease"]["notes"] = prerelease_notes[1]
+
+            cur.execute(
+                """
+                SELECT name, url FROM release_assets
+                WHERE project = %s AND version = %s""",
+                (project,prerelease_version,),
+            )
+            preassets = cur.fetchall()
+
+            if preassets:
+                preasset_info = []
+
+                for asset in preassets:
+                    preasset_info.append({
+                        "name": asset[0],
+                        "url": asset[1]
+                    })
+                    
+                response["prerelease"]["assets"] = preasset_info
 
         return json_resp(response)
 
