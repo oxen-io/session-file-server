@@ -447,13 +447,31 @@ def get_token_info():
     with db.psql.cursor() as cur:
         cur.execute(
             """
-            SELECT current_value, total_nodes, total_tokens_staked, circulating_supply, total_supply, staking_reward_pool, updated FROM session_token_stats
+            SELECT maximum_supply, sent_per_node, staking_reward_pool FROM session_token_stats
+            """,
+        )
+        stats = cur.fetchone()
+        if stats is None:
+            app.logger.warn("No token stats available!")
+            return error_resp(http.BAD_GATEWAY)
+
+        cur.execute(
+            """
+            SELECT current_value, circulating_supply, total_nodes, updated FROM session_token_history
             WHERE updated >= date_trunc('day', NOW()) - INTERVAL '%s DAY'
             """,
             (days,)
         )
         rows = cur.fetchall()
-        columns = ["current_value", "total_nodes", "total_tokens_staked", "circulating_supply", "total_supply", "staking_reward_pool", "updated"]
-        info = [dict(zip(columns, row)) for row in rows]
+        columns = ["current_value", "circulating_supply", "total_nodes", "updated"]
+        history = [dict(zip(columns, row)) for row in rows]
 
-        return json_resp({"status_code": 200,"info": info})
+        return json_resp({
+            "status_code": 200,
+            "info": {
+                "maximum_supply": maximum_supply,
+                "sent_per_node": sent_per_node,
+                "staking_reward_pool": staking_reward_pool,
+                "history": history
+            }
+        })
