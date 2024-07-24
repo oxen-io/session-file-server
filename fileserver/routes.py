@@ -74,8 +74,12 @@ def valid_blinded_version_id_for_auth(request, required):
     missing = sum(x is None or x == '' for x in (pk, ts_str, sig_in))
 
     # If we were missing one of the auth headers and don't require auth then just return a 'None'
-    if missing > 0 and not required:
-        return None
+    if missing:
+        if required or missing < 3:
+            abort_with_reason(
+                http.BAD_REQUEST, "Invalid authentication: one or more X-FS-* auth headers is missing")
+        else:
+            return None
 
     # Parameter input validation
 
@@ -87,7 +91,7 @@ def valid_blinded_version_id_for_auth(request, required):
             http.BAD_REQUEST, "Invalid authentication: X-FS-Pubkey is not a valid 66-hex digit id"
         )
 
-    if pk[0] not in (0x07,):
+    if pk[0] != 0x07:
         abort_with_reason(
             http.BAD_REQUEST, "Invalid authentication: X-FS-Pubkey must be 07- prefixed"
         )
@@ -103,7 +107,7 @@ def valid_blinded_version_id_for_auth(request, required):
         sig_in = utils.decode_hex_or_b64(sig_in, 64)
     except Exception:
         abort_with_reason(
-            http.BAD_REQUEST, "Invalid authentication: X-FS-Signature is not base64[88]"
+            http.BAD_REQUEST, "Invalid authentication: X-FS-Signature is not base64[86]"
         )
 
     try:
@@ -326,54 +330,53 @@ def get_session_version():
                 cur.execute(
                     """
                     INSERT INTO account_version_checks (blinded_id, platform, timestamp)
-                    VALUES (%s, %s, NOW())
-                    """,
+                    VALUES (%s, %s, NOW())""",
                     (blinded_id, platform),
                 )
 
     with db.psql.cursor() as cur:
+        # Validate the project exists and retrieve when it was last updated
+        cur.execute("SELECT updated from projects WHERE name = %s", (project,),)
+
+        row = cur.fetchone()
+        if row is None:
+            app.logger.warn("{} does not exist!".format(project))
+            return error_resp(http.BAD_GATEWAY)
+
+        updated = row[0]
+
+        # Fetch the latest release version
         cur.execute(
             """
-            SELECT version, prerelease_version, updated FROM release_versions
-            WHERE project = %s AND updated >= NOW() + '24 hours ago'
-        """,
+            SELECT id, version, name, notes from release_versions
+            WHERE proj_name = %s ORDER BY version_code DESC""",
             (project,),
         )
 
         row = cur.fetchone()
         if row is None:
-            app.logger.warn("{} version is more than 24 hours stale!".format(project))
+            app.logger.warn("{} has no releases!".format(project))
             return error_resp(http.BAD_GATEWAY)
 
-        version = row[0]
-        prerelease_version = row[1]
+        release_id = row[0]
         response = {
             "status_code": 200,
-            "updated": row[2].timestamp(),
-            "result": version
+            "updated": updated,
+            "result": row[1]
         }
 
-        # Add release notes and assets
-        cur.execute(
-            """
-            SELECT name, notes FROM release_notes
-            WHERE project = %s AND version = %s""",
-            (project,version,),
-        )
+        if row[2]:
+            response["name"] = row[2]
 
-        release_notes = cur.fetchone()
-        if release_notes:
-            if release_notes[0]:
-                response["name"] = release_notes[0]
+        if row[3]:
+            response["notes"] = row[3]
 
-            if release_notes[1]:
-                response["notes"] = release_notes[1]
-
+        # Add release assets
         cur.execute(
             """
             SELECT name, url FROM release_assets
-            WHERE project = %s AND version = %s""",
-            (project,version,),
+            WHERE release = %s""",
+            (release_id,),
         )
         assets = cur.fetchall()
 
@@ -389,45 +392,46 @@ def get_session_version():
             response["assets"] = asset_info
 
         # Add prerelease info if present
-        if prerelease_version:
+        cur.execute(
+            """
+            SELECT id, version, name, notes from prerelease_versions
+            WHERE proj_name = %s ORDER BY version_code DESC""",
+            (project,),
+        )
+
+        row = cur.fetchone()
+        if row is not None:
+            prerelease_id = row[0]
             response["prerelease"] = {
-                "result": prerelease_version,
-                "updated": row[2].timestamp(),
+                "result": row[1],
+                "updated": updated,
             }
 
-            cur.execute(
-                """
-                SELECT name, notes FROM release_notes
-                WHERE project = %s AND version = %s""",
-                (project,prerelease_version,),
-            )
+            if row[2]:
+                response["prerelease"]["name"] = row[2]
 
-            prerelease_notes = cur.fetchone()
-            if prerelease_notes:
-                if prerelease_notes[0]:
-                    response["prerelease"]["name"] = prerelease_notes[0]
+            if row[3]:
+                response["prerelease"]["notes"] = row[3]
 
-                if prerelease_notes[1]:
-                    response["prerelease"]["notes"] = prerelease_notes[1]
-
+            # Add prerelease assets
             cur.execute(
                 """
                 SELECT name, url FROM release_assets
-                WHERE project = %s AND version = %s""",
-                (project,prerelease_version,),
+                WHERE release = %s""",
+                (prerelease_id,),
             )
-            preassets = cur.fetchall()
+            assets = cur.fetchall()
 
-            if preassets:
-                preasset_info = []
+            if assets:
+                asset_info = []
 
-                for asset in preassets:
-                    preasset_info.append({
+                for asset in assets:
+                    asset_info.append({
                         "name": asset[0],
                         "url": asset[1]
                     })
                     
-                response["prerelease"]["assets"] = preasset_info
+                response["prerelease"]["assets"] = asset_info
 
         return json_resp(response)
 
@@ -469,9 +473,9 @@ def get_token_info():
         return json_resp({
             "status_code": 200,
             "info": {
-                "maximum_supply": maximum_supply,
-                "sent_per_node": sent_per_node,
-                "staking_reward_pool": staking_reward_pool,
+                "maximum_supply": stats[0],
+                "sent_per_node": stats[1],
+                "staking_reward_pool": stats[2],
                 "history": history
             }
         })

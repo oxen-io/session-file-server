@@ -34,8 +34,7 @@ RUN apt-get update && apt-get install --no-install-recommends -y \
 RUN curl -so /etc/apt/trusted.gpg.d/oxen.gpg https://deb.oxen.io/pub.gpg && \
     echo "deb https://deb.oxen.io $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/oxen.list && \
     apt-get update && apt-get install -y \
-    python3-pyonionreq \
-    python3-oxenmq
+    python3-pyonionreq
 
 # Install Python packages
 RUN pip3 install psycopg psycopg_pool uwsgidecorators
