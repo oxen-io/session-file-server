@@ -21,8 +21,7 @@ Debian/Ubuntu).
 - psycopg_pool
 - requests
 - uwsgidecorators
-- oxenmq
-- pyonionreq
+- session-util
 
 (The last two are Oxen projects that either need to be installed manually, or via the Oxen deb
 repository).
