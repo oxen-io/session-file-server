@@ -22,7 +22,7 @@ CREATE TABLE projects (
 
 CREATE TABLE releases (
     id BIGSERIAL PRIMARY KEY,
-    project BIGINT NOT NULL REFERENCES projects(id),
+    project BIGINT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     prerelease BOOLEAN NOT NULL DEFAULT FALSE,
     version_code BIGINT NOT NULL,
     url varchar(255) NOT NULL,
@@ -32,7 +32,7 @@ CREATE TABLE releases (
 );
 
 CREATE TABLE release_assets (
-    release BIGINT NOT NULL REFERENCES releases(id),
+    release BIGINT NOT NULL REFERENCES releases(id) ON DELETE CASCADE,
     name varchar(255) NOT NULL,
     url varchar(255) NOT NULL
 );
