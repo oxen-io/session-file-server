@@ -9,8 +9,7 @@ local default_deps = [
   'python3-pycryptodome',
   'python3-nacl',
   'python3-requests',
-  'python3-pyonionreq',
-  'python3-oxenmq',
+  'python3-session-util',
 ];
 
 // Regular build on a debian-like system:

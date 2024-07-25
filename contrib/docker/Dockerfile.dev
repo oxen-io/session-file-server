@@ -1,0 +1,155 @@
+# Base image
+FROM postgres:bullseye
+
+# Set environment variables
+ARG USER_NAME=fileserver
+ENV POSTGRES_USER=$USER_NAME
+ENV POSTGRES_PASSWORD=changeme
+ENV POSTGRES_DB=sessionfiles
+ENV PYTHONPATH=/usr/lib/python3.9:/usr/lib/python3:/usr/local/lib/python3.9/site-packages:$PYTHONPATH
+
+# Copy the database schema across (intentionally rename to 'schema.sql' in order for it to be executed)
+COPY schema.pgsql /docker-entrypoint-initdb.d/schema.sql
+
+# Install required dependencies
+RUN apt-get update && apt-get install --no-install-recommends -y \
+    python3 \
+    python3-flask \
+    python3-coloredlogs \
+    python3-pycryptodome \
+    python3-nacl \
+    python3-requests \
+    python3-pip \
+    uwsgi \
+    uwsgi-emperor \
+    uwsgi-plugin-python3 \
+    nginx \
+    libpq-dev \
+    build-essential \
+    curl \
+    lsb-release \
+    supervisor
+
+# Install the Oxen apt repository public signing key and add the Oxen apt repository
+RUN curl -so /etc/apt/trusted.gpg.d/oxen.gpg https://deb.oxen.io/pub.gpg && \
+    echo "deb https://deb.oxen.io $(lsb_release -sc) main" | tee /etc/apt/sources.list.d/oxen.list && \
+    apt-get update && apt-get install -y \
+    python3-session-util
+
+# Install Python packages
+RUN pip3 install psycopg psycopg_pool uwsgidecorators
+
+# Create a user for the application
+RUN useradd -m $USER_NAME
+
+# Switch to the fileserver user
+USER $USER_NAME
+
+# Copy the content
+WORKDIR /home/$USER_NAME/session-file-server
+COPY . /home/$USER_NAME/session-file-server
+
+# Switch to root for other setup
+USER root
+
+# Configuration for uWSGI
+#
+# Note: This differs from the README.md as we don't want the uwsgi logs to go to a file (we want them
+# to come through Docker Desktop)
+ARG FILE=/etc/uwsgi-emperor/emperor.ini
+RUN mkdir -p /etc/uwsgi-emperor/vassals
+RUN echo "cap = setgid,setuid                                                       " > $FILE && \
+    echo "emperor-tyrant = true                                                     " >> $FILE
+
+# Note: The `chmod-socket` value is set to `666` here instead of `660` as suggested in the readme to
+# avoid having to solve permission issues between `uwsgi` and `nginx`
+ARG FILE=/etc/uwsgi-emperor/vassals/sfs.ini
+RUN echo "[uwsgi]                                                                   " > $FILE && \
+    echo "chdir = /home/$USER_NAME/session-file-server                              " >> $FILE && \
+    echo "module = fileserver.web:app                                               " >> $FILE && \
+    echo "socket = /home/$USER_NAME/session-file-server/sfs.sock                    " >> $FILE && \
+    echo "chmod-socket = 666                                                        " >> $FILE && \
+    echo "plugins = python3                                                         " >> $FILE && \
+    echo "processes = 4                                                             " >> $FILE && \
+    echo "master = true                                                             " >> $FILE && \
+    echo "manage-script-name = true                                                 " >> $FILE && \
+    echo "uid = $USER_NAME                                                          " >> $FILE && \
+    echo "gid = $USER_NAME                                                          " >> $FILE && \
+    echo "disable-logrotate = true                                                  " >> $FILE
+
+RUN chown $USER_NAME:www-data /etc/uwsgi-emperor/vassals/sfs.ini
+
+# Configuration for nginx
+ARG FILE=/etc/nginx/sites-enabled/default
+RUN echo "server {                                                                  " > $FILE && \
+    echo "    listen 80;                                                            " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "    access_log /tmp/nginx_out.log;                                        " >> $FILE && \
+    echo "    error_log /tmp/nginx_err.log;                                         " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "    location / {                                                          " >> $FILE && \
+    echo "        include uwsgi_params;                                             " >> $FILE && \
+    echo "        uwsgi_pass unix:///home/$USER_NAME/session-file-server/sfs.sock;  " >> $FILE && \
+    echo "    }                                                                     " >> $FILE && \
+    echo "}                                                                         " >> $FILE
+
+# Copy configuration files
+COPY ./fileserver/config.py.sample /home/$USER_NAME/session-file-server/fileserver/config.py
+
+# Create the start-uwsgi-after-postgres script
+ARG FILE=/home/$USER_NAME/session-file-server/start-uwsgi-after-postgres.sh
+RUN echo "#!/bin/bash                                                               " > $FILE && \
+    echo "set -e                                                                    " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "until PGPASSWORD=$POSTGRES_PASSWORD psql -h \"localhost\" -U \"$POSTGRES_USER\" -d \"$POSTGRES_DB\" -c '\q' 2>/dev/null; do" >> $FILE && \
+    echo "    echo \"Postgres is unavailable - sleeping\"                           " >> $FILE && \
+    echo "    sleep 1                                                               " >> $FILE && \
+    echo "done                                                                      " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "echo \"Postgres is up - starting uWSGI\"                                  " >> $FILE && \
+    echo "uwsgi --ini /etc/uwsgi-emperor/vassals/sfs.ini                            " >> $FILE
+RUN chmod +x $FILE
+
+# Create a supervisor configuration file
+ARG FILE=/etc/supervisor/supervisord.conf
+RUN echo "[supervisord]                                                             " > $FILE && \
+    echo "nodaemon=true                                                             " >> $FILE && \
+    echo "logfile=/dev/null                                                         " >> $FILE && \
+    echo "logfile_maxbytes=0                                                        " >> $FILE && \
+    echo "loglevel=info                                                             " >> $FILE && \
+    echo "pidfile=/home/$USER_NAME/session-file-server/supervisord.pid              " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "[program:postgresql]                                                      " >> $FILE && \
+    echo "command=/usr/local/bin/docker-entrypoint.sh postgres                      " >> $FILE && \
+    echo "stderr_logfile=/tmp/postgresql_err.log                                    " >> $FILE && \
+    echo "stdout_logfile=/tmp/postgresql_out.log                                    " >> $FILE && \
+    echo "                                                                          " >> $FILE && \
+    echo "[program:nginx]                                                           " >> $FILE && \
+    echo "command=/usr/sbin/nginx -g 'daemon off;'                                  " >> $FILE && \
+    echo "autostart=true                                                            " >> $FILE && \
+    echo "autorestart=true                                                          " >> $FILE && \
+    echo "stderr_logfile=/tmp/nginx_err.log                                         " >> $FILE && \
+    echo "stdout_logfile=/tmp/nginx_out.log                                         " >> $FILE && \
+    echo "[program:uwsgi]                                                           " >> $FILE && \
+    echo "command=/home/$USER_NAME/session-file-server/start-uwsgi-after-postgres.sh" >> $FILE && \
+    echo "autostart=true                                                            " >> $FILE && \
+    echo "autorestart=true                                                          " >> $FILE && \
+    echo "stderr_logfile=/tmp/uwsgi_err.log                                         " >> $FILE && \
+    echo "stdout_logfile=/tmp/uwsgi_out.log                                         " >> $FILE && \
+    echo "[program:tail-logs]                                                       " >> $FILE && \
+    echo "command=/usr/bin/tail -f /tmp/postgresql_err.log /tmp/postgresql_out.log /tmp/nginx_err.log /tmp/nginx_out.log /tmp/uwsgi_err.log /tmp/uwsgi_out.log" >> $FILE && \
+    echo "autostart=true                                                            " >> $FILE && \
+    echo "autorestart=true                                                          " >> $FILE && \
+    echo "stderr_logfile=/dev/stderr                                                " >> $FILE && \
+    echo "stderr_logfile_maxbytes=0                                                 " >> $FILE && \
+    echo "stdout_logfile=/dev/stdout                                                " >> $FILE && \
+    echo "stdout_logfile_maxbytes=0                                                 " >> $FILE && \
+    echo "" >> /etc/supervisor/supervisord.conf
+
+# Set ownership and permissions
+RUN chown -R $USER_NAME:$USER_NAME /home/$USER_NAME/session-file-server
+
+# Expose port 80
+EXPOSE 80
+
+CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/supervisord.conf"]

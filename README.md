@@ -21,8 +21,7 @@ Debian/Ubuntu).
 - psycopg_pool
 - requests
 - uwsgidecorators
-- oxenmq
-- pyonionreq
+- session-util
 
 (The last two are Oxen projects that either need to be installed manually, or via the Oxen deb
 repository).
@@ -149,3 +148,12 @@ Everything is stored in PostgreSQL; no local file storage is used at all.
     /etc/uwsgi-emperor/vassals/sfs.ini` — uwsgi-emperor watches the files for modifications and
     restarts gracefully upon modifications (or in this case simply touching, which updates the
     file's modification time without changing its content).
+
+# Docker
+
+In order to run the dockerfile do the following:
+
+1. `docker build -t session-file-server .`
+2. `docker run -d -p 8000:80 --name session-file-server-container session-file-server`
+
+It can then be tested by running `curl "http://localhost:8000/session_version?platform=desktop"`

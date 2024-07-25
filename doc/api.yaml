@@ -158,13 +158,97 @@ paths:
                       The unix timestamp when this version was retrieved from Github; this can be up
                       to 24 hours ago in case of consistent fetch errors, though normally will be
                       within the last 30 minutes.
+        400:
+          description: Authentication information was provided but in an invalid way.
+          content: {}
+        401:
+          description: The auth signature provided was invalid.
+          content: {}
         404:
           description: "No such platform: the `platform` value was invalid."
+          content: {}
+        425:
+          description: "The timestamp provide for authentication was too far from the current time."
           content: {}
         502:
           description: >
             Bad gateway.  Returned if the current version could not be successfuly retrieved from
             Github within the last 24 hours.
+          content: {}
+
+  /token_info:
+    get:
+      summary: Retrieves the latest Session release version.
+      deprecated: True
+      description: >
+        Returns the current version of session for one of the three platforms (desktop, ios, or
+        android); this is effectively proxying (and caching) the response from the github release
+        page.
+
+
+        Note that the value is cached and can be up to 30 minutes out of date normally, and up to 24
+        hours out of date if we cannot reach the Github API for some reason.
+      parameters:
+        - name: days
+          in: query
+          required: true
+          description: The number of days to retrieve information for.
+          schema:
+            type: integer
+            minimum: 1
+            default: 7
+            maximum: 30
+      responses:
+        200:
+          description: Stats retrieved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status_code: >
+                    The value 200.  Included for backwards compatibility, and may be removed
+                    someday.
+                  info:
+                    type: object
+                    description: The token information.
+                    properties:
+                      total_supply:
+                        type: integer
+                        format: int64
+                        description: The maximum number of tokens available.
+                      sent_per_node:
+                        type: integer
+                        format: int64
+                        description: The number of SENT that gets staked per node.
+                      staking_reward_pool:
+                        type: integer
+                        format: int64
+                        description: The number of SENT in the staking reward pool.
+                      history:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            current_value:
+                              type: number
+                              format: double
+                              description: The value for the token at the `updated` time.
+                            circulating_supply:
+                              type: integer
+                              format: int64
+                              description: The number of tokens in circulation at the `updated` time.
+                            total_nodes:
+                              type: integer
+                              format: int64
+                              description: The total numbe of nodes at the `updated` time.
+                            updated:
+                              type: number
+                              format: double
+                              description: The unix timestamp when this informaion was retrieved.
+        502:
+          description: >
+            Bad gateway.  Returned if there are no stats for the token currently stored.
           content: {}
 
   /files:
